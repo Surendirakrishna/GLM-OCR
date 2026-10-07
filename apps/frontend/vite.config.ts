@@ -28,7 +28,7 @@ export default defineConfig({
     // 代理后端请求，避免跨域和连接问题
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:8000',
+        target: process.env.BACKEND_URL || 'http://127.0.0.1:8000',
         changeOrigin: true,
         // 不重写路径，保持 /api/v1/...
         rewrite: (path) => path,

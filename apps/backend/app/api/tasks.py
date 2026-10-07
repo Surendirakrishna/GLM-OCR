@@ -5,13 +5,13 @@
 import json
 import uuid
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional
 from datetime import datetime, UTC
 
 from fastapi import APIRouter, HTTPException, status, UploadFile, File, Form, Response
 from mimetypes import guess_type
 
-from app.schemas.response import ApiResponse, TaskData, TaskResultData
+from app.schemas.response import ApiResponse, TaskData
 from app.core.task_manager import get_task_manager
 from app.utils.logger import logger
 from app.utils.upload_file_manager import file_upload_handler

@@ -121,7 +121,7 @@ export function FileUpload({ onFileUploaded, onTaskStatusChange }: FileUploadPro
 		// 验证文件类型
 		if (!isValidFileType(file)) {
 			toast.error(
-				`不支持的文件格式。支持的格式：${ALLOWED_EXTENSIONS.join(', ').toUpperCase()}`
+				`Unsupported file format. Supported formats: ${ALLOWED_EXTENSIONS.join(', ').toUpperCase()}`
 			)
 			// 重置 input 的值
 			if (fileInputRef.current) {
@@ -133,7 +133,7 @@ export function FileUpload({ onFileUploaded, onTaskStatusChange }: FileUploadPro
 		// 验证文件大小
 		if (!isValidFileSize(file)) {
 			toast.error(
-				`文件大小超过限制。当前文件：${formatFileSize(file.size)}，最大允许：${formatFileSize(MAX_FILE_SIZE)}`
+				`File is too large: ${formatFileSize(file.size)} (maximum ${formatFileSize(MAX_FILE_SIZE)})`
 			)
 			// 重置 input 的值
 			if (fileInputRef.current) {
@@ -174,7 +174,7 @@ export function FileUpload({ onFileUploaded, onTaskStatusChange }: FileUploadPro
 			}
 		} catch (error: any) {
 			// 上传失败
-			const errorMessage = error.response?.data?.message || error.message || '文件上传失败'
+			const errorMessage = error.response?.data?.message || error.message || 'File upload failed'
 			toast.error(errorMessage)
 			setSelectedFile(null)
 			setIsLoading(false)
@@ -226,7 +226,7 @@ export function FileUpload({ onFileUploaded, onTaskStatusChange }: FileUploadPro
 				setIsLoading(false)
 			}
 		} catch (error: any) {
-			console.error('查询任务状态失败:', error)
+			console.error('Failed to get task status:', error)
 			// 查询失败时也停止轮询，避免无限重试
 			stopPolling(fileId)
 			setIsLoading(false)
@@ -245,7 +245,7 @@ export function FileUpload({ onFileUploaded, onTaskStatusChange }: FileUploadPro
 		<div className='h-full flex flex-col bg-white dark:bg-gray-900 border-r border-border'>
 			{/* 文件上传区域 */}
 			<div className='p-4'>
-				<h2 className='text-lg font-semibold mb-4'>文件上传</h2>
+				<h2 className='text-lg font-semibold mb-4'>Upload file</h2>
 				<div
 					className={cn(
 						'border-2 border-dashed rounded-lg py-8 px-4 text-center cursor-pointer transition-colors',
@@ -269,12 +269,12 @@ export function FileUpload({ onFileUploaded, onTaskStatusChange }: FileUploadPro
 					) : (
 						<>
 							<Upload className='size-12 mx-auto mb-4 text-gray-400' />
-							<p className='text-sm font-medium mb-1'>点击或拖拽文件到此处</p>
+							<p className='text-sm font-medium mb-1'>Click or drag a file here</p>
 							<p className='text-xs text-gray-500'>
-								格式：png/jpg/jpeg, pdf
-								{/* 格式：png/jpg/jpeg, pdf, doc, docx */}
+								Formats: png/jpg/jpeg, pdf
+								{/* Formats: png/jpg/jpeg, pdf, doc, docx */}
 							</p>
-							<p className='text-xs text-gray-400 mt-1'>最大 20MB</p>
+							<p className='text-xs text-gray-400 mt-1'>Max 20MB</p>
 						</>
 					)}
 				</div>

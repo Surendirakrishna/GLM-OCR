@@ -1,11 +1,10 @@
 """
 Repository基类
 """
-from typing import Generic, TypeVar, Type, Any, Dict, List, Optional
+from typing import Generic, TypeVar, Type, Any, List, Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from pydantic import BaseModel
 
 ModelType = TypeVar("ModelType", bound=Any)
 

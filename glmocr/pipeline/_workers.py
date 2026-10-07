@@ -26,6 +26,7 @@ import queue
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+from glmocr.adapters import modified_qwen
 from glmocr.pipeline._common import (
     IDENTIFIER_DONE,
     IDENTIFIER_IMAGE,
@@ -365,8 +366,20 @@ def recognition_worker(
                         msg["cropped_image"],
                         msg["region"]["task_type"],
                     )
-                    del msg["cropped_image"]
-                    future = executor.submit(ocr_client.process, req)
+                    crop = msg.pop("cropped_image")
+                    if (
+                        modified_qwen.is_modified_qwen_family(page_loader.model_family)
+                        and msg["region"]["task_type"] in ("text", "table")
+                    ):
+                        # Kept for the script-fix second pass (pipeline._emit_results)
+                        msg["region"]["_crop"] = crop
+                    future = executor.submit(
+                        _recognize,
+                        ocr_client,
+                        req,
+                        msg["region"]["task_type"],
+                        page_loader.model_family,
+                    )
                     futures[future] = msg
 
             elif identifier == IDENTIFIER_DONE:
@@ -393,6 +406,31 @@ def recognition_worker(
 # ------------------------------------------------------------------
 # Recognition helpers
 # ------------------------------------------------------------------
+
+
+def recognize_crop(page_loader: "PageLoader", ocr_client: Any, crop: Any,
+                   task_type: str, prompt_extra: str = "",
+                   upscale: bool = False) -> Optional[str]:
+    """Recognise one crop synchronously; returns the region content or None."""
+    req = page_loader.build_request_from_image(crop, task_type, prompt_extra, upscale)
+    response, status_code = _recognize(ocr_client, req, task_type, page_loader.model_family)
+    if status_code != 200:
+        return None
+    content = response["choices"][0]["message"]["content"]
+    return content.strip() if content else ""
+
+
+def _recognize(ocr_client: Any, req: Dict, task_type: str, model_family: str):
+    """Run one region request; map non-GLM output to GLM region content."""
+    if modified_qwen.is_modified_qwen_family(model_family):
+        response, status_code = ocr_client.process(req, task_type=task_type)
+        if status_code == 200:
+            message = response["choices"][0]["message"]
+            message["content"] = modified_qwen.to_region_content(
+                message.get("content"), task_type
+            )
+        return response, status_code
+    return ocr_client.process(req)
 
 
 def _collect_done_futures(

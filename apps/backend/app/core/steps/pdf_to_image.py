@@ -5,8 +5,6 @@ PDF转图片步骤 - 适配app_v2
 import os
 import json
 from typing import Dict, Any, Optional, Callable
-from pathlib import Path
-import sys
 
 from app.core.flows.base import ProcessingContext
 from app.utils.logger import logger

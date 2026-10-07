@@ -1,7 +1,7 @@
 """
 任务恢复处理器
 """
-from typing import Dict, Any
+from typing import Dict
 
 from app.models.task import Task, TaskStatus
 from app.repository.task import TaskRepository

@@ -45,7 +45,7 @@ function fallbackCopy(text: string): Promise<boolean> {
       const successful = document.execCommand('copy');
       resolve(successful);
     } catch (err) {
-      console.error('复制失败:', err);
+      console.error('Copy failed:', err);
       resolve(false);
     } finally {
       document.body.removeChild(textArea);

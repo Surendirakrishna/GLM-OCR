@@ -2,7 +2,6 @@
 数据库连接和会话管理
 """
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy.orm import declarative_base
 
 from app.models.base import Base
 from app.utils.config import settings

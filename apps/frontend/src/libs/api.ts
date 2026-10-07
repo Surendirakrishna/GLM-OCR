@@ -133,7 +133,7 @@ export async function uploadTask(params: UploadTaskParams): Promise<UploadTaskDa
 	const response = await api.post<UploadTaskResponse>('/tasks/upload', formData)
 
 	if (!response.data.success) {
-		throw new Error(response.data.message || '上传失败')
+		throw new Error(response.data.message || 'Upload failed')
 	}
 
 	return response.data.data
@@ -148,7 +148,7 @@ export async function getTaskStatus(taskId: string | number): Promise<TaskStatus
 	const response = await api.get<TaskStatusResponse>(`/tasks/${taskId}`)
 
 	if (!response.data.success) {
-		throw new Error(response.data.message || '查询任务状态失败')
+		throw new Error(response.data.message || 'Failed to get task status')
 	}
 
 	return response.data.data

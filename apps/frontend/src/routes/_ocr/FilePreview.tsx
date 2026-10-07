@@ -166,7 +166,7 @@ export function FilePreview({ file, result }: FilePreviewProps) {
 		return (
 			<div className='h-full flex items-center justify-center bg-gray-50 dark:bg-gray-900'>
 				<div className='text-center text-gray-500'>
-					<p className='text-lg'>请选择或上传文件</p>
+					<p className='text-lg'>Select or upload a file</p>
 				</div>
 			</div>
 		)
@@ -212,7 +212,7 @@ export function FilePreview({ file, result }: FilePreviewProps) {
 					</div>
 				) : (
 					<div className='h-full flex items-center justify-center text-gray-500'>
-						<p>不支持的文件格式</p>
+						<p>Unsupported file format</p>
 					</div>
 				)}
 			</div>

@@ -8,7 +8,7 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime, UTC
 
 from app.db.database import AsyncSessionLocal
-from app.models.task import Task, TaskStatus, TaskPriority
+from app.models.task import TaskStatus, TaskPriority
 from app.repository.task import TaskRepository
 from app.core.worker import Worker
 from app.core.lock_manager import LockManager
@@ -138,7 +138,7 @@ class TaskManager:
                 task_repo = TaskRepository(db)
 
                 # 创建任务
-                task = await task_repo.create_task(
+                await task_repo.create_task(
                     task_id=task_id,
                     document_id=document_id,
                     original_filename=original_filename,

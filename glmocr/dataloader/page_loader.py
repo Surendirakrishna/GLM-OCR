@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Dict, Any, List, Optional, Tuple, Union
 from PIL import Image
 
 
+from glmocr.adapters import modified_qwen
 from glmocr.utils.image_utils import (
     load_image_to_base64,
     pdf_to_images_pil,
@@ -81,6 +82,13 @@ class PageLoader:
 
         # Task prompt mapping
         self.task_prompt_mapping = config.task_prompt_mapping
+
+        # Recognizer family and crop padding
+        self.model_family = config.model_family
+        self.region_padding = config.region_padding
+        self.region_min_canvas = config.region_min_canvas
+        self.max_page_side = config.max_page_side
+        self.table_min_width = config.table_min_width
 
         # PDF-to-image parameters
         self.pdf_dpi = config.pdf_dpi
@@ -170,7 +178,7 @@ class PageLoader:
             if source[:5] == b"%PDF-":
                 yield from self._iter_pdf_bytes(source)
             else:
-                yield Image.open(BytesIO(source))
+                yield self._cap_size(Image.open(BytesIO(source)))
             return
 
         if source.startswith("file://"):
@@ -181,7 +189,7 @@ class PageLoader:
         if os.path.isfile(file_path) and file_path.lower().endswith(".pdf"):
             yield from self._iter_pdf(file_path)
         else:
-            yield self._load_image(source)
+            yield self._cap_size(self._load_image(source))
 
     def _compute_end_page(self) -> Optional[int]:
         """Parse pdf_max_pages into 0-based inclusive end page index, or None for last page."""
@@ -244,7 +252,7 @@ class PageLoader:
         if isinstance(source, bytes):
             if source[:5] == b"%PDF-":
                 return self._load_pdf_bytes(source)
-            return [Image.open(BytesIO(source))]
+            return [self._cap_size(Image.open(BytesIO(source)))]
 
         if source.startswith("file://"):
             file_path = source[7:]
@@ -256,7 +264,20 @@ class PageLoader:
             return self._load_pdf(file_path)
 
         # Otherwise load as a single image page
-        return [self._load_image(source)]
+        return [self._cap_size(self._load_image(source))]
+
+    def _cap_size(self, image: Image.Image) -> Image.Image:
+        """Shrink oversized page images (e.g. A0 scans at 6000x9000 px).
+
+        PDFs are already rendered at most 3500 px on the long side; images
+        given directly get the same cap. Region crops are downscaled to the
+        recognizer's pixel budget anyway, so the full size only costs time.
+        """
+        cap = self.max_page_side
+        if cap and max(image.size) > cap:
+            image = image.convert("RGB") if image.mode not in ("RGB", "L") else image
+            image.thumbnail((cap, cap), Image.Resampling.LANCZOS)
+        return image
 
     def _load_image(self, source: str) -> Image.Image:
         """Load a single image."""
@@ -338,7 +359,8 @@ class PageLoader:
         return request_data
 
     def build_request_from_image(
-        self, image: Image.Image, task_type: str = "text"
+        self, image: Image.Image, task_type: str = "text", prompt_extra: str = "",
+        upscale: bool = False,
     ) -> Dict[str, Any]:
         """Build an API request from a PIL Image.
 
@@ -349,6 +371,9 @@ class PageLoader:
         Returns:
             Full API request payload.
         """
+        if modified_qwen.is_modified_qwen_family(self.model_family):
+            return self._build_modified_qwen_request(image, task_type, prompt_extra, upscale)
+
         prompt_text = ""
         if self.task_prompt_mapping:
             prompt_text = self.task_prompt_mapping.get(task_type, "")
@@ -375,6 +400,48 @@ class PageLoader:
 
         return {
             "messages": [{"role": "user", "content": content}],
+            "max_tokens": self.max_tokens,
+            "temperature": self.temperature,
+            "top_p": self.top_p,
+            "top_k": self.top_k,
+            "repetition_penalty": self.repetition_penalty,
+        }
+
+    def _build_modified_qwen_request(
+        self, image: Image.Image, task_type: str, prompt_extra: str = "",
+        upscale: bool = False,
+    ) -> Dict[str, Any]:
+        """salad request: its OCR prompt, 28px-grid scaling, PNG.
+
+        A task-specific prompt in task_prompt_mapping overrides the default.
+        """
+        prompt_text = (self.task_prompt_mapping or {}).get(task_type) or modified_qwen.OCR_PROMPT
+        prompt_text += prompt_extra
+        if upscale and 0 < image.width < self.table_min_width:
+            scale = min(2.0, self.table_min_width / image.width)
+            image = image.resize(
+                (round(image.width * scale), round(image.height * scale)),
+                Image.Resampling.LANCZOS,
+            )
+        image = modified_qwen.pad_region(image, self.region_padding, self.region_min_canvas)
+        image = modified_qwen.scale_to_fit(image)
+        buffered = BytesIO()
+        image.save(buffered, format="PNG")
+        encoded_image = base64.b64encode(buffered.getvalue()).decode()
+
+        return {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/png;base64,{encoded_image}"},
+                        },
+                        {"type": "text", "text": prompt_text},
+                    ],
+                }
+            ],
             "max_tokens": self.max_tokens,
             "temperature": self.temperature,
             "top_p": self.top_p,

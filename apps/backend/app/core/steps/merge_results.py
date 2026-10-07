@@ -2,7 +2,7 @@
 结果合并步骤
 """
 
-from typing import Dict, Any, List, Optional, Callable
+from typing import Dict, Any, Optional, Callable
 from pathlib import Path
 import json
 import os
@@ -111,7 +111,7 @@ async def _merge_to_markdown(
                 if img_name and not os.path.isabs(img_name):
                     img_name = os.path.abspath(img_name)
 
-                text = f'<div style="text-align: center;"><img src="http://localhost:8000/api/v1/tasks/file?path={img_name}" alt="Image"/></div>\n'
+                text = f'<div style="text-align: center;"><img src="/api/v1/tasks/file?path={img_name}" alt="Image"/></div>\n'
             markdown_lines.append(f"{text}\n")
             merge_res_layout.append(
                 {

@@ -8,8 +8,7 @@ import os
 from typing import List, Optional, Dict, Any
 from pathlib import Path
 
-from app.utils.converters.base import BaseConverter
-from app.utils.converters.exceptions import UnsupportedFormatError, ConversionFailedError
+from app.utils.converters.exceptions import UnsupportedFormatError
 from app.utils.logger import logger
 
 

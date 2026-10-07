@@ -3,7 +3,6 @@
 """
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any, List, TypeVar, Generic
-from datetime import datetime
 
 
 T = TypeVar('T')

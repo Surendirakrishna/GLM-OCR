@@ -1,0 +1,347 @@
+# salad (modified Qwen) as the region recognizer behind the GLM-OCR
+# harness. Copy of glmocr/config.yaml; changes are marked [salad].
+#
+# GLM-OCR Configuration
+#
+# This file contains all configuration options for the GLM-OCR SDK.
+# Default values are shown. Uncomment and modify as needed.
+
+# Server settings (for glmocr.server)
+server:
+  host: "0.0.0.0"
+  port: 5012 # [salad] 5002 is taken by unstract-runner
+  debug: false
+
+# Logging settings
+logging:
+  # Log level: DEBUG, INFO, WARNING, ERROR
+  # DEBUG enables profiling output with timing information
+  level: INFO
+  # format: "[%(levelname)s] %(name)s: %(message)s"  # custom format (optional)
+
+# Pipeline settings
+pipeline:
+  # ============================================================================
+  # MaaS Mode (Zhipu Cloud API)
+  # ============================================================================
+  # When enabled, the SDK forwards requests directly to Zhipu's cloud API
+  # without local processing. The cloud service handles layout detection,
+  # OCR, and result formatting internally.
+  #
+  # Use this mode when:
+  # - You don't have a GPU or don't want to self-host
+  # - You want the simplest setup (just need an API key)
+  # - You want to use the exact same service as Zhipu's cloud offering
+  #
+  # Note: When maas.enabled=true, the ocr_api and layout settings below are ignored.
+  maas:
+    enabled: false # [salad] self-hosted
+    api_url: https://open.bigmodel.cn/api/paas/v4/layout_parsing
+    model: glm-ocr
+    api_key: null # Required! Get from https://open.bigmodel.cn
+    verify_ssl: true
+    connect_timeout: 30
+    request_timeout: 300
+    retry_max_attempts: 2
+    retry_backoff_base_seconds: 0.5
+    retry_backoff_max_seconds: 8.0
+    retry_jitter_ratio: 0.2
+    retry_status_codes: [429, 500, 502, 503, 504]
+    connection_pool_size: 16
+
+  # ============================================================================
+  # Self-hosted Mode (vLLM / SGLang)
+  # ============================================================================
+  # When maas.enabled=false, the SDK uses the settings below to connect to
+  # a self-hosted vLLM or SGLang service running the GLM-OCR model.
+  #
+  # Use this mode when:
+  # - You have GPU resources and want full control
+  # - You need offline/air-gapped operation
+  # - You want to customize the pipeline (layout detection, prompts, etc.)
+
+  # OCR API client configuration (for self-hosted vLLM/SGLang/Ollama)
+  ocr_api:
+    # Basic connection
+    api_host: 127.0.0.1
+    api_port: 30000 # [salad] docker sglang_salad
+
+    # Model name included in API requests.
+    # Required for mlx_vlm.server (e.g. "mlx-community/GLM-OCR-bf16").
+    # Set to `glm-ocr` to match `--served-model-name` when using vLLM/SGLang.
+    # For Ollama, set to your model name (e.g. "glm-ocr:latest").
+    model: salad # [salad] --served-model-name
+
+    # URL construction: {api_scheme}://{api_host}:{api_port}{api_path}
+    # Or set api_url directly to override
+    api_scheme: null # null = auto (https if port 443, else http)
+    api_path: /v1/chat/completions
+    # Note: If using Ollama and encountering 502 errors with vision requests,
+    # try switching to "ollama_generate" mode with api_path: /api/generate
+    api_url: null # full URL override (optional)
+
+    # API mode: "openai" (default) or "ollama_generate"
+    # - "openai": Use OpenAI-compatible /v1/chat/completions endpoint (vLLM/SGLang/Ollama)
+    # - "ollama_generate": Use Ollama's native /api/generate endpoint
+    api_mode: openai
+
+    # Authentication (for MaaS providers like Zhipu, OpenAI, etc.)
+    api_key: null # or set ZHIPU_API_KEY env var
+    headers: {} # additional HTTP headers
+
+    # SSL/TLS
+    verify_ssl: false
+
+    # Timeouts (seconds)
+    connect_timeout: 30
+    request_timeout: 300 # [salad]
+
+    # Retry settings (helps with transient 429/5xx and overloaded OCR servers)
+    retry_max_attempts: 2
+    retry_backoff_base_seconds: 0.5
+    retry_backoff_max_seconds: 8.0
+    retry_jitter_ratio: 0.2
+    retry_status_codes: [429, 500, 502, 503, 504]
+
+    # HTTP connection pool size (default 128). Set >= max_workers to avoid
+    # "Connection pool is full" when runs concurrent requests.
+    connection_pool_size: 128
+
+    # [salad] Stream and cut off looping generations. Tables need a large
+    # span: rows of identical cells (<td>-</td>) repeat legitimately.
+    loop_abort: true
+    loop_min_span_text: 300
+    loop_min_span_table: 4096
+
+  # Maximum parallel workers for region recognition
+  # Lower values to reduce 503 errors on busy OCR servers
+  max_workers: 20 # [salad] = sglang --max-running-requests
+  # Queue sizes
+  page_maxsize: 100
+  region_maxsize: 2000
+
+  # Page loader: handles image/PDF loading and API request building
+  page_loader:
+    # Generation parameters
+    max_tokens: 8192
+    temperature: 0.0
+    top_p: 0.1 # [salad] model defaults: temp 0, top_p 0.1, no rep. penalty
+    top_k: -1
+    repetition_penalty: 1.0
+
+    # Image processing
+    t_patch_size: 2
+    patch_expand_factor: 1
+    image_expect_length: 6144
+    image_format: JPEG # JPEG, PNG, WEBP
+    min_pixels: 12544 # 112 * 112
+    max_pixels: 71372800 # 14 * 14 * 4 * 1280
+
+    # Task-specific prompts
+    # [salad] null = the model's own "OCR this image to HTML" prompt for every
+    # region; its HTML answer is converted back to text / <table> / $$latex$$.
+    task_prompt_mapping: null
+    model_family: salad
+    # [salad] White margin around crops, then small crops are pasted onto a
+    # white canvas >= 512x512 at native scale. Bare heading/line crops make
+    # salad invent text ("Journal of Applied Mathematics", 1.1.1.1.N loops).
+    region_padding: 32
+    region_min_canvas: 512
+    # [salad] Short Indic crops get look-alike scripts wrong (Kannada read as
+    # Telugu, Gujarati as Devanagari). Re-read those with a hint naming the
+    # script of the surrounding paragraphs.
+    script_fix: true
+    # [salad] Tables with native Indic digits are re-read enlarged to >= 2048px wide
+    # (max 2x): at native scale Bengali digits were misread (৩ as ০). The
+    # re-read is kept only if rows x cols match: enlarging can flip how an
+    # ambiguous header is structured (seen on an English BPCL table).
+    table_min_width: 2048
+
+    # PDF processing
+    pdf_dpi: 200
+    pdf_max_pages: null # null = no limit
+    pdf_verbose: false
+
+  # Result formatter: post-processing and output formatting
+  result_formatter:
+    # Output format: json, markdown, or both
+    output_format: both
+    # Post-process switches
+    enable_merge_formula_numbers: true
+    enable_merge_text_blocks: true
+    enable_format_bullet_points: true
+
+    # Label to visualization category mapping (for layout visualization)
+    label_visualization_mapping:
+      table:
+        - table
+      formula:
+        - display_formula
+        - inline_formula
+      image:
+        - chart
+        - image
+      text:
+        - abstract
+        - algorithm
+        - content
+        - doc_title
+        - figure_title
+        - paragraph_title
+        - reference_content
+        - text
+        - vertical_text
+        - vision_footnote
+        - seal
+        - formula_number
+        # [salad] Page headers/footers are kept (upstream drops them)
+        - header
+        - footer
+
+  # Layout detection settings
+  layout:
+    # [salad] Layout from docling-layout-heron-101 (docker
+    # docling-layout-heron101, :8600) instead of in-process PP-DocLayoutV3.
+    # Its docling labels are mapped to the PP labels used below; reading
+    # order comes from an XY-cut. Set backend: pp_doclayout to switch back.
+    backend: heron
+    api_url: http://127.0.0.1:8600/detect
+    api_timeout: 60
+    overlap_iou_threshold: 0.6
+    overlap_contain_threshold: 0.8
+
+    # PP-DocLayoutV3 model directory (backend: pp_doclayout only)
+    # Can be a local folder or a Hugging Face model id
+    # (Use *_safetensors for Transformers; PaddlePaddle/PP-DocLayoutV3 is a PaddleOCR export)
+    model_dir: PaddlePaddle/PP-DocLayoutV3_safetensors
+
+    # Detection threshold
+    threshold: 0.5 # [salad] heron scores; PP-DocLayoutV3 used 0.3
+    # threshold_by_class:           # per-class threshold override
+    #   0: 0.5
+    #   1: 0.3
+    #   text: 0.5
+    #   table: 0.2
+
+    # Processing
+    # batch_size: max images per model forward pass (reduce to 1 if OOM)
+    batch_size: 1
+    workers: 1
+    cuda_visible_devices: "0"
+    # Explicit device placement for the layout model.
+    # - null (default): auto-select (CUDA if available via cuda_visible_devices,
+    #   otherwise CPU).
+    # - "cpu": force CPU even when a GPU is available. Useful for single-GPU
+    #   setups where the GPU is reserved for the OCR model.
+    # - "cuda" or "cuda:N": use a specific GPU (overrides cuda_visible_devices).
+    # Can also be set via GLMOCR_LAYOUT_DEVICE env var or --layout-device CLI flag.
+    # device: null
+    # img_size: null                # resize input (optional)
+
+    # Use polygon masks for region cropping and visualization.
+    # When true, regions are cropped using the polygon outline from layout
+    # detection (more precise, masks out content outside the polygon),
+    # recommended for documents with rotating or staggered layouts.
+    # When false, regions are cropped using the bounding box only (faster, simpler),
+    # recommended for regular documents without rotating.
+    use_polygon: false
+
+    # Post-processing
+    layout_nms: true
+    layout_unclip_ratio:
+      - 1.0
+      - 1.0
+
+    # Merge mode for overlapping bboxes: "large" or "small"
+    # Can be a single value or per-class dict
+    layout_merge_bboxes_mode:
+      0: large # abstract
+      1: large # algorithm
+      2: large # aside_text
+      3: large # chart
+      4: large # content
+      5: large # display_formula
+      6: large # doc_title
+      7: large # figure_title
+      8: large # footer
+      9: large # footer
+      10: large # footnote
+      11: large # formula_number
+      12: large # header
+      13: large # header
+      14: large # image
+      15: large # inline_formula
+      16: large # number
+      17: large # paragraph_title
+      18: small # reference
+      19: large # reference_content
+      20: large # seal
+      21: large # table
+      22: large # text
+      23: large # vertical_text
+      24: large # vision_footnote
+
+    # Map detected labels to OCR task types
+    # - text/table/formula: OCR with corresponding prompt
+    # - skip: keep region but don't OCR (e.g., images)
+    # - abandon: discard region entirely
+    label_task_mapping:
+      text:
+        - abstract
+        - algorithm
+        - content
+        - doc_title
+        - figure_title
+        - paragraph_title
+        - reference_content
+        - text
+        - vertical_text
+        - vision_footnote
+        - seal
+        - formula_number
+        # [salad] Page headers/footers are kept (upstream drops them)
+        - header
+        - footer
+      table:
+        - table
+      formula:
+        - display_formula
+        - inline_formula
+      skip:
+        - chart
+        - image
+      abandon:
+        - number
+        - footnote
+        - aside_text
+        - reference
+        - footer_image
+        - header_image
+
+    # Map label index to label name
+    id2label:
+      0: abstract
+      1: algorithm
+      2: aside_text
+      3: chart
+      4: content
+      5: display_formula
+      6: doc_title
+      7: figure_title
+      8: footer
+      9: footer_image
+      10: footnote
+      11: formula_number
+      12: header
+      13: header_image
+      14: image
+      15: inline_formula
+      16: number
+      17: paragraph_title
+      18: reference
+      19: reference_content
+      20: seal
+      21: table
+      22: text
+      23: vertical_text
+      24: vision_footnote

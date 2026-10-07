@@ -1,353 +1,278 @@
-## GLM-OCR
+# GLM-OCR harness with salad
 
-[中文阅读](README_zh.md)
+This checkout runs the GLM-OCR document pipeline and its ocr.z.ai web UI with
+two models swapped out:
 
-<div align="center">
-<img src=resources/logo.svg width="40%"/>
-</div>
-<p align="center">
-    👋 Join our <a href="resources/WECHAT.md" target="_blank">WeChat</a> and <a href="https://discord.gg/QR7SARHRxK" target="_blank">Discord</a> community
-    <br>
-    📖 Check out the GLM-OCR <a href="https://arxiv.org/abs/2603.10910" target="_blank">technical report</a>
-    <br>
-    📍 Use GLM-OCR's <a href="https://docs.z.ai/guides/vlm/glm-ocr" target="_blank">API</a>
-</p>
+| Step | Upstream GLM-OCR | Here |
+|---|---|---|
+| Layout detection | PP-DocLayoutV3 (in process) | **docling-layout-heron-101** (docker service) |
+| Region recognition | GLM-OCR | **salad** (`surendirakrishna/salad`, modified Qwen) |
 
-### Model Introduction
+It is tuned for **English, Indian languages and tables**. On the benchmark in
+`bench/`, the harness reads Indic text with 0.8% character error and gets
+97.6% of table cells right (see [Benchmark](#benchmark)).
 
-GLM-OCR is a multimodal OCR model for complex document understanding, built on the GLM-V encoder–decoder architecture. It introduces Multi-Token Prediction (MTP) loss and stable full-task reinforcement learning to improve training efficiency, recognition accuracy, and generalization. The model integrates the CogViT visual encoder pre-trained on large-scale image–text data, a lightweight cross-modal connector with efficient token downsampling, and a GLM-0.5B language decoder. Combined with a two-stage pipeline of layout analysis and parallel recognition based on PP-DocLayout-V3, GLM-OCR delivers robust and high-quality OCR performance across diverse document layouts.
+```
+PDF / image ──► backend :8010 ──► glmocr harness :5012 ──► heron :8600   (layout boxes)
+   (UI :3006)    pages in            crop each region   ──► salad :30000  (HTML per region)
+                 parallel            HTML → text / <table> / $$latex$$ ──► Markdown + JSON
+```
 
-**Key Features**
-
-- **State-of-the-Art Performance**: Achieves a score of 94.62 on OmniDocBench V1.5, ranking #1 overall, and delivers state-of-the-art results across major document understanding benchmarks, including formula recognition, table recognition, and information extraction.
-
-- **Optimized for Real-World Scenarios**: Designed and optimized for practical business use cases, maintaining robust performance on complex tables, code-heavy documents, seals, and other challenging real-world layouts.
-
-- **Efficient Inference**: With only 0.9B parameters, GLM-OCR supports deployment via vLLM, SGLang, and Ollama, significantly reducing inference latency and compute cost, making it ideal for high-concurrency services and edge deployments.
-
-- **Easy to Use**: Fully open-sourced and equipped with a comprehensive [SDK](https://github.com/zai-org/GLM-OCR) and inference toolchain, offering simple installation, one-line invocation, and smooth integration into existing production pipelines.
-
-### News & Updates
-
-- **[2026.3.12]** GLM-OCR SDK now supports agent-friendly Skill mode — just `pip install glmocr` + set API key, ready to use via CLI or Python with no GPU or YAML config needed. See: [GLM-OCR Skill](skills/glmocr/SKILL.md)
-- **[2026.3.12]** GLM-OCR Technical Report is now available. See: [GLM-OCR Technical Report](https://arxiv.org/abs/2603.10910)
-- **[2026.2.12]** Fine-tuning tutorial based on LLaMA-Factory is now available. See: [GLM-OCR Fine-tuning Guide](examples/finetune/README.md)
-
-### Download Model
-
-| Model   | Download Links                                                                                                              | Precision |
-| ------- | --------------------------------------------------------------------------------------------------------------------------- | --------- |
-| GLM-OCR | [🤗 Hugging Face](https://huggingface.co/zai-org/GLM-OCR)<br> [🤖 ModelScope](https://modelscope.cn/models/ZhipuAI/GLM-OCR) | BF16      |
-
-## GLM-OCR SDK
-
-We provide an SDK for using GLM-OCR more efficiently and conveniently.
-
-### Install SDK
-
-Choose the lightest installation that matches your scenario:
+## Quick start
 
 ```bash
-# Cloud / MaaS + local images / PDFs (fastest install)
-pip install glmocr
-
-# Self-hosted pipeline (layout detection)
-pip install "glmocr[selfhosted]"
-
-# Flask service support
-pip install "glmocr[server]"
+apps/start-salad.sh
 ```
 
-Install from source for development:
+The script stops other GPU model containers (`sglang_mineru25_pro`,
+the other salad variant), starts `sglang_salad_fp8` and
+`docling-layout-heron101`,
+waits for both, then starts the harness, backend and UI. Open
+**http://localhost:3006**.
+
+- **Remote server:** the UI is reached through an SSH tunnel. In VS Code use
+  the Ports panel → *Forward a Port* → `3006`, or run
+  `ssh -N -L 3006:localhost:3006 <user>@<server>` on your laptop. Only 3006
+  needs forwarding; the UI proxies `/api` to the backend.
+- **Stop:** Ctrl+C (or kill the script) stops the harness, backend and UI.
+  The model containers keep running; `docker stop sglang_salad_fp8` frees the GPU.
+- **Logs:** `apps/logs/{harness,backend,frontend}.log`.
+- **Give the GPU back to MinerU:**
+  `docker stop sglang_salad_fp8 && docker start sglang_mineru25_pro`.
+  `apps/start-salad.sh` takes the GPU back.
+
+### Services
+
+| Service | Port | Notes |
+|---|---|---|
+| salad (SGLang, docker `sglang_salad_fp8`) | 30000 | `--served-model-name salad`, FP8 weights (`--quantization fp8`), ~26 GB VRAM incl. KV cache, max 20 concurrent requests. bf16 original: `sglang_salad` (`SALAD_CONTAINER=sglang_salad apps/start-salad.sh`) |
+| heron layout (docker `docling-layout-heron101`) | 8600 | `POST /detect`, ~1 GB VRAM |
+| glmocr harness (`configs/salad.yaml`) | 5012 | `POST /glmocr/parse {"images": [path, ...]}` |
+| backend (FastAPI, `apps/backend`) | 8010 | env `layout_ocr_url` points at the harness |
+| frontend (vite, `apps/frontend`) | 3006 | env `BACKEND_URL` sets the `/api` proxy target |
+
+Only one VLM fits on the 32 GB GPU at a time. Environments: the SDK and
+harness use `../.venv` (editable `glmocr`), the backend uses
+`apps/backend/.venv`, and the frontend runs with `npx pnpm@9`.
+
+### Call the harness directly
 
 ```bash
-# Install from source
-git clone https://github.com/zai-org/glm-ocr.git
-cd glm-ocr
-uv venv --python 3.12 --seed && source .venv/bin/activate
-uv pip install -e .
+curl -s -X POST localhost:5012/glmocr/parse -H 'Content-Type: application/json' \
+     -d '{"images": ["/abs/path/page.png"]}' | jq -r .markdown_result
 ```
 
-### Model Deployment
+## Configuration
 
-Two ways to use GLM-OCR:
+Everything is in `configs/salad.yaml` (a copy of `glmocr/config.yaml`;
+salad-specific lines are marked `[salad]`). Restart with
+`apps/start-salad.sh` after editing.
 
-#### Option 1: Zhipu MaaS API (Recommended for Quick Start)
+| Setting | Value | Why |
+|---|---|---|
+| `ocr_api.api_port`, `model` | 30000, `salad` | the SGLang container |
+| `ocr_api.loop_abort` | true | stream responses and cut a generation off when its tail repeats for more than `loop_min_span_text` (300) chars, or `loop_min_span_table` (4096) for tables, whose rows of identical cells repeat legitimately |
+| `max_workers` | 20 | matches salad's `--max-running-requests` |
+| `page_loader.model_family` | `salad` | modified Qwen prompt, 28px-grid scaling, PNG, HTML answer conversion (`modified_qwen` works too) |
+| `page_loader.task_prompt_mapping` | null | every region uses the model's own "OCR this image to HTML" prompt |
+| `temperature` / `top_p` / `repetition_penalty` | 0 / 0.1 / 1.0 | the model's recommended defaults |
+| `page_loader.region_padding` | 32 | white margin around each crop |
+| `page_loader.region_min_canvas` | 512 | small crops are pasted at native scale onto a ≥512×512 white canvas; bare heading crops (~200×40 px) made salad invent text ("Journal of Applied Mathematics", `1.1.1.1.N` runs) |
+| `page_loader.max_page_side` | 3500 | page images larger than this (long side) are shrunk on load, as PDFs already are |
+| `page_loader.script_fix` | true | second pass for look-alike Indic scripts (below) |
+| `page_loader.table_min_width` | 2048 | tables written with native Indic digits are re-read enlarged to this width (below) |
+| `layout.backend` | `heron` | `pp_doclayout` switches back to PP-DocLayoutV3 |
+| `layout.api_url` | `http://127.0.0.1:8600/detect` | heron service |
+| `layout.threshold` | 0.5 | heron's scores; PP-DocLayoutV3 used 0.3 |
+| `layout.overlap_iou_threshold` / `overlap_contain_threshold` | 0.6 / 0.8 | duplicate and nested box removal |
+| `layout.label_task_mapping` | `header`, `footer` under `text` | page headers/footers (running titles, page numbers, "Signature of Contractor") are kept as plain text; upstream discards them. Move them back under `abandon` to drop them |
+| `server.port` | 5012 | harness port |
 
-Use the hosted cloud API – no GPU needed. The cloud service runs the complete GLM-OCR pipeline internally, so the SDK simply forwards your request and returns the result.
+Backend environment variables (`apps/backend/app/utils/config.py`):
+`layout_ocr_url` (harness URL), `OCR_PAGE_CONCURRENCY` (pages of one document
+sent at once, default 6) and `OCR_PAGE_TIMEOUT` (seconds per page, default 600).
 
-1. Get an API key from https://open.bigmodel.cn
-2. Configure `config.yaml`:
+## How it works
 
-```yaml
-pipeline:
-  maas:
-    enabled: true # Enable MaaS mode
-    api_key: your-api-key # Required
-```
+### Recognition with salad (`glmocr/adapters/modified_qwen.py`)
 
-That's it! When `maas.enabled=true`, the SDK acts as a thin wrapper that:
+salad is a modified Qwen vision-language model (Qwen3.5 architecture) with an
+extrapolated vision tower. It always answers with layout HTML
+(`<div data-label=… data-bbox=…>`). The adapter:
 
-- Forwards your documents to the Zhipu cloud API
-- Returns the results directly (Markdown + JSON layout details)
-- No local processing, no GPU required
+- builds requests the way the model expects (prompt, `scale_to_fit`, PNG) and
+  applies the padding/canvas rules above;
+- converts the HTML back into GLM-OCR region content (Markdown for text,
+  `<table>` HTML for tables, `$$…$$` for formulas), so the result formatter
+  and UI work unchanged;
+- merges a header-only `<table>` followed by a body `<table>` with the same
+  column count (salad sometimes splits one table like this);
+- emits table HTML on one line, because blank lines inside an HTML table end
+  the HTML block in Markdown;
+- detects runaway repetition for `loop_abort`.
 
-Input note (MaaS): the upstream API accepts `file` as a URL or a `data:<mime>;base64,...` data URI.
-If you have raw base64 without the `data:` prefix, wrap it as a data URI (recommended). The SDK will
-auto-wrap local file paths / bytes / raw base64 into a data URI when calling MaaS.
+### Layout with heron (`glmocr/layout/heron_detector.py`)
 
-API documentation: https://docs.bigmodel.cn/cn/guide/models/vlm/glm-ocr
+The heron service returns score-sorted boxes with docling labels and no
+reading order. The detector:
 
-#### Option 2: Self-host with vLLM / SGLang
+- maps docling labels to the PP-DocLayout names the pipeline keys on
+  (`section_header` → `paragraph_title`, `title` → `doc_title`, `picture` →
+  `image`, `formula` → `display_formula`, `document_index` → `content`,
+  `page_header`/`page_footer` → `header`/`footer`); checkbox marks are
+  dropped;
+- removes duplicates (IoU ≥ 0.6) and any box ≥ 80% inside a larger box,
+  whatever the labels. Heron nests boxes often ("(Online Only)" inside its
+  title, tables inside the list paragraph around them), and reading both
+  crops duplicated the text: on a 34-page tender PDF, 19 nested boxes and 9
+  doubled tables went to 0 with no text lost;
+- orders regions by recursive XY-cut (columns first, then rows).
 
-Deploy the GLM-OCR model locally for full control. The SDK provides the complete pipeline: layout detection, parallel region OCR, and result formatting.
+### Indic second pass (`glmocr/adapters/script_fix.py`)
 
-Install the self-hosted extra first:
+Read one crop at a time, a short heading or list item has no context, and
+salad confuses look-alike scripts: Kannada comes back as Telugu, Gujarati as
+Devanagari, and scanned Malayalam as Sinhala. Long paragraphs on the same page
+are read correctly. After each page:
+
+1. **Script fix.** A text region whose script differs from the text around it
+   (weighted by length and reading-order distance) is read again with a hint
+   naming that script. The new reading is kept only if it comes back in that
+   script, so genuine English or second-language text is left alone.
+2. **Native-digit tables.** At native scale salad misreads small Bengali
+   digits (৩ as ০). Tables that use native Indic digits (০–৯, ०–९, …) are read
+   again from a crop enlarged to 2048 px (at most 2×). The new reading is kept
+   only if its rows × columns are unchanged: enlarging can flip how an
+   ambiguous header is structured, which happened on an English annual-report
+   table. Tables with ASCII digits are never enlarged.
+
+Only the regions that need it are re-read, so pages without Indic script cost
+nothing extra.
+
+### Backend and UI
+
+- The backend sends up to 6 pages of a document to the harness at once (one
+  page at a time left most of salad's batch slots idle): a 4-page PDF went
+  from 55 s to 31 s with identical output.
+- Image links in the merged Markdown are relative (`/api/v1/tasks/file?…`),
+  so they load through the UI's `/api` proxy on any port.
+- The UI text is in English.
+
+## Speed
+
+Time per page is dominated by the longest region: salad writes each region
+out token by token, and a big table is one long generation (a 180-cell table
+is ~2,500 tokens of HTML). Pages, and regions within a page, already run in
+parallel, so the levers are per-request decode speed and avoiding waste:
+
+| Change | Effect |
+|---|---|
+| FP8 weights (`sglang_salad_fp8`) | decode 57 → 91 tokens/s per request; benchmark 69.5 → 48.5 s with the same accuracy (Indic CER 0.86% vs 0.89%, cells 97.6% both) |
+| Page images capped at 3500 px (`page_loader.max_page_side`) | an A0-size scanned bill rendered at 6281×8889 px cost ~2–3 s per page in encoding and layout |
+| Pages in parallel (backend) | 4-page PDF 55 → 31 s |
+
+On a 3-page bill with two full-page tables the slowest page went from 59 s
+to 40 s, and a BPCL table page from 31.5 s to 22 s. N-gram speculative
+decoding (good for repetitive table HTML) crashes in SGLang 0.5.10 for
+salad's hybrid Qwen3.5 architecture (`NgramVerifyInput has no attribute
+topk`); worth retrying on a newer SGLang.
+
+## Benchmark
+
+`bench/make_pages.py` renders 10 page designs in Chromium (correct Indic
+shaping), each saved clean and scan-degraded (grayscale, skew, blur, noise,
+JPEG), with exact ground truth taken from the data that rendered the page:
+
+- English: financial statement with merged headers, dense table with rowspan
+  groups, borderless table plus list;
+- Hindi–English bilingual notice with a totals row, Hindi two-column page;
+- Tamil, Bengali (native digits), Telugu and Kannada pages with tables;
+- Malayalam + Gujarati text page.
+
+`bench/score.py` runs every page and reports text CER (NFC-normalised,
+Markdown stripped, tables excluded) and table cell accuracy (rowspan/colspan
+expanded into a grid, cell by cell) plus table shape.
 
 ```bash
-pip install "glmocr[selfhosted]"
+../.venv/bin/python bench/make_pages.py                  # writes bench/data/
+../.venv/bin/python bench/score.py harness --tag mytry   # needs the stack running
+../.venv/bin/python bench/score.py native  --tag full    # salad on whole pages, no harness
+../.venv/bin/python bench/score.py --compare base_harness v4 mytry
 ```
 
-##### Using vLLM
-
-Install vLLM:
-
-```bash
-docker pull vllm/vllm-openai:v0.19.0-ubuntu2404
-```
-
-Or using with pip:
-
-```bash
-pip install -U "vllm>=0.19.0"
-```
-
-Launch the service:
-
-```bash
-pip install "transformers>=5.3.0"
-
-vllm serve zai-org/GLM-OCR  --port 8080 --speculative-config '{"method": "mtp", "num_speculative_tokens": 3}' --served-model-name glm-ocr
-```
-
->Note
-  Add `--max-model-len` and `--gpu-memory-utilization` according to Your own machine to handle large image/pdf
-
-##### Using SGLang
-
-Install SGLang:
-
-```bash
-docker pull lmsysorg/sglang:v0.5.10
-```
-
-Or using with pip:
-
-```bash
-pip install "sglang>=0.5.10"
-```
-
-Launch the service:
-
-```bash
-SGLANG_ENABLE_SPEC_V2=1 sglang serve --model-path zai-org/GLM-OCR --port 8080 --speculative-algorithm NEXTN --speculative-num-steps 3 --speculative-eagle-topk 1 --speculative-num-draft-tokens 4 --served-model-name glm-ocr
-```
-
->Note
-  Add `--context-len` and `--mem-fraction-static` according to Your own machine to handle large image/pdf
-
-
-#### Option 3: Ollama/MLX
-
-For specialized deployment scenarios, see the detailed guides:
-
-- **[Apple Silicon with mlx-vlm](examples/mlx-deploy/README.md)** - Optimized for Apple Silicon Macs
-- **[Ollama Deployment](examples/ollama-deploy/README.md)** - Simple local deployment with Ollama
-
-#### Option 4: SDK Server + Client (GPU-less Client)
-
-Deploy the SDK Server on a GPU machine, then use any machine as a client — no GPU needed on the client side. The client connects via the MaaS-compatible protocol, pointing `api_url` at your self-hosted server.
-
-```yaml
-# Client config.yaml
-pipeline:
-  maas:
-    enabled: true
-    api_url: http://<SERVER_IP>:5002/glmocr/parse
-    api_key: any-string    # self-hosted server does not validate keys
-    verify_ssl: false
-```
-
-See the full guide: **[Self-hosted SDK Server + Client](examples/self-host/README.md)**
-
-#### Update Configuration
-
-After launching the service, configure `config.yaml`:
-
-```yaml
-pipeline:
-  maas:
-    enabled: false # Disable MaaS mode (default)
-  ocr_api:
-    api_host: localhost # or your vLLM/SGLang server address
-    api_port: 8080
-```
-
-### SDK Usage Guide
-
-#### CLI
-
-```bash
-# Parse a single image
-glmocr parse examples/source/code.png
-
-# Parse a directory
-glmocr parse examples/source/
-
-# Set output directory
-glmocr parse examples/source/code.png --output ./results/
-
-# Use a custom config
-glmocr parse examples/source/code.png --config my_config.yaml
-
-# Enable debug logging with profiling
-glmocr parse examples/source/code.png --log-level DEBUG
-
-# Run layout detection on CPU (keep GPU free for OCR model)
-glmocr parse examples/source/code.png --layout-device cpu
-
-# Run layout detection on a specific GPU
-glmocr parse examples/source/code.png --layout-device cuda:1
-
-# Override any config value via --set (dotted path, repeatable)
-glmocr parse examples/source/code.png --set pipeline.ocr_api.api_port 8080
-glmocr parse examples/source/ --set pipeline.layout.use_polygon true --set logging.level DEBUG
-```
-
-#### Python API
-
-```python
-from glmocr import GlmOcr, parse
-
-# Simple function
-result = parse("image.png")
-result = parse(["img1.png", "img2.jpg"])
-result = parse("https://example.com/image.png")
-result.save(output_dir="./results")
-
-# Note: a list is treated as pages of a single document.
-
-# Class-based API
-with GlmOcr() as parser:
-    result = parser.parse("image.png")
-    print(result.json_result)
-    result.save()
-
-# Place layout model on CPU (useful when GPU is reserved for OCR)
-with GlmOcr(layout_device="cpu") as parser:
-    result = parser.parse("image.png")
-
-# Place layout model on a specific GPU
-with GlmOcr(layout_device="cuda:1") as parser:
-    result = parser.parse("image.png")
-```
-
-#### Flask Service
-
-Install the optional server dependency first:
-
-```bash
-pip install "glmocr[server]"
-```
-
-```bash
-# Start service
-python -m glmocr.server
-
-# With debug logging
-python -m glmocr.server --log-level DEBUG
-
-# Call API
-curl -X POST http://localhost:5002/glmocr/parse \
-  -H "Content-Type: application/json" \
-  -d '{"images": ["./example/source/code.png"]}'
-```
-
-Semantics:
-
-- `images` can be a string or a list.
-- A list is treated as pages of a single document.
-- For multiple independent documents, call the endpoint multiple times (one document per request).
-
-
-### Modular Architecture
-
-GLM-OCR uses composable modules for easy customization:
-
-| Component             | Description                            |
-| --------------------- | -------------------------------------- |
-| `PageLoader`          | Preprocessing and image encoding       |
-| `OCRClient`           | Calls the GLM-OCR model service        |
-| `PPDocLayoutDetector` | PP-DocLayout layout detection          |
-| `ResultFormatter`     | Post-processing, outputs JSON/Markdown |
-
-You can extend the behavior by creating custom pipelines:
-
-```python
-from glmocr.dataloader import PageLoader
-from glmocr.ocr_client import OCRClient
-from glmocr.postprocess import ResultFormatter
-
-
-class MyPipeline:
-  def __init__(self, config):
-    self.page_loader = PageLoader(config)
-    self.ocr_client = OCRClient(config)
-    self.formatter = ResultFormatter(config)
-
-  def process(self, request_data):
-    # Implement your own processing logic
-    pass
-```
-
-## Star History
-
-<a href="https://www.star-history.com/?repos=zai-org%2FGLM-OCR&type=date&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/image?repos=zai-org/GLM-OCR&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/image?repos=zai-org/GLM-OCR&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/image?repos=zai-org/GLM-OCR&type=date&legend=top-left" />
- </picture>
-</a>
-
-## Acknowledgement
-
-This project is inspired by the excellent work of the following projects and communities:
-
-- [PP-DocLayout-V3](https://huggingface.co/PaddlePaddle/PP-DocLayoutV3)
-- [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR)
-- [MinerU](https://github.com/opendatalab/MinerU)
-
-## License
-
-The Code of this repo is under Apache License 2.0.
-
-The GLM-OCR model is released under the MIT License.
-
-The complete OCR pipeline integrates [PP-DocLayoutV3](https://huggingface.co/PaddlePaddle/PP-DocLayoutV3) for document layout analysis, which is licensed under the Apache License 2.0. Users should comply with both licenses when using this project.
-
-## Citation
-
-If you find GLM-OCR useful in your research, please cite our technical report:
-
-```bibtex
-@misc{duan2026glmocrtechnicalreport,
-      title={GLM-OCR Technical Report},
-      author={Shuaiqi Duan and Yadong Xue and Weihan Wang and Zhe Su and Huan Liu and Sheng Yang and Guobing Gan and Guo Wang and Zihan Wang and Shengdong Yan and Dexin Jin and Yuxuan Zhang and Guohong Wen and Yanfeng Wang and Yutao Zhang and Xiaohan Zhang and Wenyi Hong and Yukuo Cen and Da Yin and Bin Chen and Wenmeng Yu and Xiaotao Gu and Jie Tang},
-      year={2026},
-      eprint={2603.10910},
-      archivePrefix={arXiv},
-      primaryClass={cs.CL},
-      url={https://arxiv.org/abs/2603.10910},
-}
-```
+Options: `--only kn_` filters pages, `--workers` sets concurrency, `--url`
+overrides the endpoint. Outputs go to `bench/results/<tag>/` (Markdown per
+page and `summary.json`).
+
+Results (20 pages):
+
+| Run | Text CER, English | Text CER, Indic | Table cells | Table shape | Time |
+|---|---|---|---|---|---|
+| salad on whole pages, no harness (`base_native`) | 0.6% | 10.7% | 96.9% | 100% | 290 s |
+| harness before Indic tuning (`base_harness`) | 0.0% | 3.5% | 91.0% | 94% | 63 s |
+| **harness now** (`v4`) | **0.0%** | **0.8%** | **97.6%** | **100%** | 70 s |
+
+The real English pages in the BPCL annual report give identical output before
+and after the Indic tuning.
+
+For the record, on olmOCR-bench old_scans (2026-09-30, with PP-DocLayoutV3),
+salad scored 48.1 through the harness and 50.4 on whole pages, against 48.5
+and 51.3 for the base modified Qwen model without the vision boost. The
+harness has not been re-benchmarked there since the switch to heron.
+
+## Troubleshooting
+
+- **Jobs fail or hang, GPU shows MinerU:** only one VLM fits on the GPU. If
+  someone starts `sglang_mineru25_pro`, salad is stopped and the harness has
+  no recognizer. `docker ps` shows which is up; `apps/start-salad.sh` switches
+  back (it stops MinerU).
+- **UI did not come up, `ENOSPC` in `apps/logs/frontend.log`:** the system
+  ran out of inotify file watches (another IDE server held ~65k), not disk
+  space. The limit is raised to 524288 in
+  `/etc/sysctl.d/60-inotify-watches.conf`. If a step fails, the start script
+  stops the services it already started.
+- **Killing a service by hand:** use anchored patterns, e.g.
+  `pgrep -f "^/home/nandha/GLM/.venv/bin/python -m glmocr.server"`; an
+  unanchored `pkill -f` matches your own shell's command line.
+
+## Known limits
+
+- A single heading that mixes two Indic scripts (e.g. Malayalam / Gujarati)
+  keeps the second script wrong; the script fix only corrects whole regions.
+- Handwriting is read poorly (a model limit).
+- "Label: value" rows (ವಿಷಯ: …) inside one layout box can come out as all
+  labels, then all values.
+- En dashes (–) come out as hyphens.
+- A single very large table bounds page time: it is one long generation
+  (~26 s for a full-page table) that parallelism cannot shorten.
+
+## Files changed from upstream
+
+Based on [zai-org/GLM-OCR](https://github.com/zai-org/GLM-OCR) (Apache-2.0,
+see `LICENSE`).
+
+New: `apps/start-salad.sh`, `configs/salad.yaml`,
+`glmocr/adapters/{modified_qwen,script_fix}.py`, `glmocr/layout/heron_detector.py`,
+`bench/{make_pages,score}.py`.
+
+Modified:
+
+- SDK: `glmocr/config.py` (new settings), `dataloader/page_loader.py`
+  (salad requests, page-size cap), `ocr_client.py` (streaming loop abort),
+  `pipeline/_workers.py` and `pipeline/pipeline.py` (adapter, heron backend,
+  second pass), `postprocess/result_formatter.py` (headings, headers/footers).
+- Backend: `core/steps/layout_ocr.py` (parallel pages),
+  `core/steps/merge_results.py` (relative image links), `utils/config.py`;
+  unused imports removed.
+- Frontend: `vite.config.ts` (`BACKEND_URL`), UI strings translated to
+  English.
+
+Removed as unused here: `examples/` (except `examples/source/GLM-4.5V.pdf` and `seal.png`,
+the unit tests' samples), `skills/` (Zhipu cloud API helpers),
+`.github/` (upstream release pipelines), `agent.md`, `README_zh.md`, the
+Docker deploy files and the old `apps/start-local.sh` / `start-docker.sh`,
+README images. All are recoverable with `git checkout HEAD -- <path>`.
+`resources/PingFang.ttf` stays (layout visualisation font) and
+`apps/backend/README.md` stays (the backend's packaging needs it).
+
+The SDK's unit tests (`glmocr/tests/test_unit.py`, 157 tests) pass.

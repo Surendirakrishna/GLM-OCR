@@ -1,8 +1,6 @@
 """
 FastAPI应用入口
 """
-import sys
-from pathlib import Path
 
 
 from contextlib import asynccontextmanager

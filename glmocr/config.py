@@ -106,6 +106,13 @@ class OCRApiConfig(_BaseConfig):
     # "Connection pool is full" when layout mode runs concurrent requests. Default 128.
     connection_pool_size: Optional[int] = 128
 
+    # Stream responses and cut a generation short when it starts looping.
+    # Repeated spans shorter than these are kept (table rows of identical
+    # cells legitimately repeat).
+    loop_abort: bool = False
+    loop_min_span_text: int = 300
+    loop_min_span_table: int = 4096
+
 
 class MaaSApiConfig(_BaseConfig):
     """Configuration for Zhipu MaaS GLM-OCR API.
@@ -163,6 +170,25 @@ class PageLoaderConfig(_BaseConfig):
 
     task_prompt_mapping: Optional[Dict[str, str]] = None
 
+    # Recognizer family: "glm" (GLM-OCR) or "salad"/"modified_qwen", which use
+    # the modified Qwen prompt, image scaling and HTML output (see glmocr.adapters).
+    model_family: str = "glm"
+    # White margin (px) added around each region crop before recognition.
+    region_padding: int = 0
+    # salad: paste smaller crops onto a white canvas this big (px).
+    region_min_canvas: int = 0
+    # salad: re-read short regions whose Indic script disagrees with
+    # the surrounding text, with a script hint (glmocr/adapters/script_fix.py).
+    script_fix: bool = False
+    # salad: tables using native Indic digits are re-read from a crop
+    # enlarged to this width (px, up to 2x), kept if rows x cols match the
+    # first reading; small Indic digits are misread at native scale. 0 = off.
+    table_min_width: int = 0
+
+    # Page images larger than this (px, long side) are shrunk on load; PDFs
+    # are rendered with the same cap. None = no cap.
+    max_page_side: Optional[int] = 3500
+
     pdf_dpi: int = 200
     pdf_max_pages: Optional[int] = None
     pdf_verbose: bool = False
@@ -199,6 +225,15 @@ class ResultFormatterConfig(_BaseConfig):
 
 
 class LayoutConfig(_BaseConfig):
+    # "pp_doclayout" (PP-DocLayoutV3, in process) or "heron"
+    # (docling-layout-heron-101 HTTP service, see glmocr/layout/heron_detector.py)
+    backend: str = "pp_doclayout"
+    # heron: service endpoint, timeout and overlap cleanup
+    api_url: Optional[str] = None
+    api_timeout: int = 60
+    overlap_iou_threshold: float = 0.6
+    overlap_contain_threshold: float = 0.8
+
     model_dir: Optional[str] = None
     threshold: float = 0.3
     threshold_by_class: Optional[Dict[Union[int, str], float]] = None

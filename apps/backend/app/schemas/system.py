@@ -1,8 +1,8 @@
 """
 系统相关的Pydantic Schema
 """
-from pydantic import BaseModel, Field
-from typing import Dict, Any, List, Optional
+from pydantic import BaseModel
+from typing import Dict, List, Optional
 
 
 class WorkerStats(BaseModel):

@@ -111,7 +111,7 @@ export function MarkdownPreview() {
 				return (
 					<img
 						src={src}
-						alt={alt || '图片'}
+						alt={alt || 'Image'}
 						className='max-w-full h-auto rounded-lg my-4 mx-auto block'
 						style={{
 							width: 'auto',
@@ -139,7 +139,7 @@ export function MarkdownPreview() {
 	if (!blocks || blocks.length === 0) {
 		return (
 			<div className='flex items-center justify-center h-full text-muted-foreground'>
-				<p>暂无解析内容</p>
+				<p>No parsed content yet</p>
 			</div>
 		)
 	}

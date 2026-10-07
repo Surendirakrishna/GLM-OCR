@@ -6,10 +6,9 @@ from __future__ import annotations
 
 import os
 from abc import ABC, abstractmethod
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any
 from pathlib import Path
 
-from app.utils.logger import logger
 
 
 class BaseConverter(ABC):

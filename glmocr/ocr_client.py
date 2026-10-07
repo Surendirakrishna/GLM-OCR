@@ -102,6 +102,11 @@ class OCRClient:
         # Model information
         self.model = config.model
 
+        # Streaming loop abort (openai mode only)
+        self.loop_abort = getattr(config, "loop_abort", False)
+        self.loop_min_span_text = getattr(config, "loop_min_span_text", 300)
+        self.loop_min_span_table = getattr(config, "loop_min_span_table", 4096)
+
     def _make_session(self) -> requests.Session:
         """Create a Session with a larger connection pool for concurrent use."""
         session = requests.Session()
@@ -255,12 +260,15 @@ class OCRClient:
             f"Failed to connect to API server at {self.api_url} within {self.connect_timeout} seconds"
         )
 
-    def process(self, request_data: Dict) -> Tuple[Dict, int]:
+    def process(
+        self, request_data: Dict, task_type: Optional[str] = None
+    ) -> Tuple[Dict, int]:
         """
         Process a recognition request.
 
         Args:
             request_data: Request payload containing messages, etc.
+            task_type: Region task type; picks the loop-abort threshold.
 
         Returns:
             (response_dict, http_status_code)
@@ -282,9 +290,21 @@ class OCRClient:
 
         total_attempts = int(self.retry_max_attempts) + 1
         last_error: Optional[str] = None
+        stream = self.loop_abort and self.api_mode != "ollama_generate"
 
         for attempt in range(total_attempts):
             try:
+                if stream:
+                    with profiler.measure("http_request"):
+                        result = self._process_streaming(
+                            request_data, headers, task_type
+                        )
+                    if result is not None:
+                        return result
+                    raise requests.exceptions.RequestException(
+                        "streaming request failed"
+                    )
+
                 with profiler.measure("http_request"):
                     response = self._session.post(
                         self.api_url,
@@ -386,6 +406,78 @@ class OCRClient:
             "error": f"API request failed after {total_attempts} attempts",
             "detail": last_error,
         }, 500
+
+    def _process_streaming(
+        self, request_data: Dict, headers: Dict, task_type: Optional[str]
+    ) -> Optional[Tuple[Dict, int]]:
+        """Stream an OpenAI-style completion, aborting if the output loops.
+
+        Closing the connection makes vLLM/SGLang abort the generation, so a
+        looping region frees its slot instead of running to max_tokens.
+        Returns None on a retryable failure.
+        """
+        from glmocr.adapters.modified_qwen import find_loop_start
+
+        min_span = (
+            self.loop_min_span_table if task_type == "table" else self.loop_min_span_text
+        )
+        payload = dict(request_data, stream=True)
+        response = self._session.post(
+            self.api_url,
+            headers=headers,
+            data=json.dumps(payload),
+            timeout=self.request_timeout,
+            verify=self.verify_ssl,
+            stream=True,
+        )
+        try:
+            status = int(response.status_code)
+            if status != 200:
+                body_preview = (response.text or "")[:500]
+                if status in self.retry_status_codes:
+                    logger.warning("OCR API status %s: %s", status, body_preview)
+                    return None
+                return {
+                    "error": "API request failed",
+                    "status_code": status,
+                    "response": body_preview,
+                }, status
+
+            parts = []
+            length = 0
+            checked_at = 0
+            for line in response.iter_lines(decode_unicode=True):
+                if not line or not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if data == "[DONE]":
+                    break
+                try:
+                    delta = json.loads(data)["choices"][0].get("delta") or {}
+                except (ValueError, KeyError, IndexError):
+                    continue
+                piece = delta.get("content") or ""
+                if not piece:
+                    continue
+                parts.append(piece)
+                length += len(piece)
+                if length - checked_at >= 256:
+                    checked_at = length
+                    text = "".join(parts)
+                    cut = find_loop_start(text, min_span)
+                    if cut is not None:
+                        logger.warning(
+                            "Aborting looping %s generation after %d chars",
+                            task_type or "region",
+                            length,
+                        )
+                        parts = [text[:cut]]
+                        break
+            output = "".join(parts)
+        finally:
+            response.close()
+
+        return {"choices": [{"message": {"content": output.strip()}}]}, 200
 
     def _convert_to_ollama_generate(self, request_data: Dict) -> Dict:
         """Convert OpenAI chat format to Ollama generate format.

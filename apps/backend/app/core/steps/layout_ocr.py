@@ -2,12 +2,11 @@
 版面分析和OCR处理步骤
 """
 
+import asyncio
 import json
-from typing import Dict, Any, Optional, Callable, List, Union
+from typing import Dict, Any, Optional, Callable, List
 from pathlib import Path
 from app.core.ocr_client import LayoutAndOCRClient
-import httpx
-import base64
 import os
 from app.core.flows.base import ProcessingContext
 from app.utils.config import settings
@@ -111,20 +110,36 @@ async def _call_ocr_service(
     if progress_callback:
         await progress_callback(0.0, f"Initializing OCR service for {page_count} pages")
     custom_url = config.get("custom_url", None)
-    cli = LayoutAndOCRClient()
+    cli = LayoutAndOCRClient(timeout=settings.OCR_PAGE_TIMEOUT)
     pages_result = []
     page_width = page_size.get("width")
     page_height = page_size.get("height")
     block_idx = 1
     ref_image_paths = []
-    for i, image_file in enumerate(image_files):
-        page_num = i + 1
-        result = await cli.process_single_image(image_file, custom_url=custom_url)
+    # Send several pages to the OCR service at once: one page leaves most of
+    # the model server's batch slots idle while its longest region decodes.
+    semaphore = asyncio.Semaphore(max(1, settings.OCR_PAGE_CONCURRENCY))
+    total_pages = len(image_files) or 1
+    pages_done = 0
+
+    async def recognize_page(image_file: str):
+        nonlocal pages_done
+        async with semaphore:
+            result = await cli.process_single_image(image_file, custom_url=custom_url)
+        pages_done += 1
         if progress_callback:
-            progress = (i / page_count) * 100
             await progress_callback(
-                progress, f"Processing page {page_num}/{page_count}"
+                pages_done / total_pages * 100,
+                f"Processed page {pages_done}/{total_pages}",
             )
+        return result
+
+    page_results = await asyncio.gather(
+        *(recognize_page(image_file) for image_file in image_files)
+    )
+
+    for i, (image_file, result) in enumerate(zip(image_files, page_results)):
+        page_num = i + 1
         page_blocks = []
         for idx, block in enumerate(result):
             block_label = block.get("label", "text")

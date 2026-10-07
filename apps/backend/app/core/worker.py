@@ -5,7 +5,7 @@ import asyncio
 import uuid
 from datetime import datetime, UTC
 from typing import Optional
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from app.db.database import AsyncSessionLocal
 from app.models.task import Task, TaskStatus

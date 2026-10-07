@@ -2,7 +2,6 @@
 任务重试处理器
 """
 import random
-from typing import Optional
 
 from app.models.task import Task, TaskStatus
 from app.repository.task import TaskRepository

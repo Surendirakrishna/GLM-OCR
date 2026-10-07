@@ -301,7 +301,7 @@ const PdfViewerCanvasOnly: React.FC<PdfViewerProps> = ({
         <div className={`pdf-viewer flex flex-col h-full overflow-hidden ${className}`}>
             {/* 工具栏：缩放 + 翻页 */}
             <div className="toolbar bg-white border-b p-2 grid grid-cols-2 xl:grid-cols-3 gap-4 sticky top-0 z-10">
-                <div className='hidden xl:block text-nowrap truncate'>{file?.name || 'PDF 文件预览'}</div>
+                <div className='hidden xl:block text-nowrap truncate'>{file?.name || 'PDF preview'}</div>
                 <div className="flex items-center justify-center gap-3">
 
                     <button
@@ -362,8 +362,8 @@ const PdfViewerCanvasOnly: React.FC<PdfViewerProps> = ({
                     file={file}
                     options={documentOptions}
                     onLoadSuccess={onDocumentLoadSuccess}
-                    loading={<div className="text-center py-20 text-gray-500">正在加载 PDF...</div>}
-                    error={<div className="text-red-600 text-center py-20">PDF 加载失败，请检查文件</div>}
+                    loading={<div className="text-center py-20 text-gray-500">Loading PDF...</div>}
+                    error={<div className="text-red-600 text-center py-20">Could not load the PDF. Please check the file.</div>}
                 >
                     {numPages > 0 && (
                         <div

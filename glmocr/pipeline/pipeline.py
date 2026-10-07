@@ -19,6 +19,7 @@ import time
 import threading
 from typing import TYPE_CHECKING, Any, Dict, Generator, List, Optional
 
+from glmocr.adapters import modified_qwen
 from glmocr.dataloader import PageLoader
 from glmocr.ocr_client import OCRClient
 from glmocr.parser_result import PipelineResult
@@ -86,6 +87,10 @@ class Pipeline:
 
         if layout_detector is not None:
             self.layout_detector = layout_detector
+        elif config.layout.backend == "heron":
+            from glmocr.layout.heron_detector import HeronLayoutDetector
+
+            self.layout_detector = HeronLayoutDetector(config.layout)
         else:
             from glmocr.layout import PPDocLayoutDetector
 
@@ -305,6 +310,31 @@ class Pipeline:
             original_images=[],
         )
 
+    def _fix_scripts(self, grouped: List[List[Dict[str, Any]]]) -> None:
+        """salad: re-read short regions read in a look-alike script."""
+        if self.config.page_loader.script_fix and modified_qwen.is_modified_qwen_family(
+            self.page_loader.model_family
+        ):
+            from glmocr.adapters.script_fix import fix_page
+            from glmocr.pipeline._workers import recognize_crop
+
+            def recognize(crop, task_type, prompt_extra, upscale):
+                return recognize_crop(
+                    self.page_loader, self.ocr_client, crop, task_type,
+                    prompt_extra, upscale,
+                )
+
+            reread_tables = self.page_loader.table_min_width > 0
+            for page in grouped:
+                try:
+                    fix_page(page, recognize, max_workers=self.max_workers,
+                             reread_indic_tables=reread_tables)
+                except Exception as e:
+                    logger.warning("Script fix failed: %s", e)
+        for page in grouped:
+            for region in page:
+                region.pop("_crop", None)
+
     def _emit_results(
         self,
         state: PipelineState,
@@ -356,6 +386,7 @@ class Pipeline:
                 time.sleep(0.05)
                 continue
 
+            self._fix_scripts(grouped)
             cropped_images = state.collect_cropped_images_for_unit(page_indices)
             raw_json = self._build_raw_json(grouped)
             json_u, md_u, image_files = self.result_formatter.process(

@@ -1,9 +1,8 @@
 """
 通用响应模型
 """
-from typing import Optional, Any, Generic, TypeVar
+from typing import Optional, Generic, TypeVar
 from pydantic import BaseModel, Field
-from datetime import datetime
 
 T = TypeVar('T')
 

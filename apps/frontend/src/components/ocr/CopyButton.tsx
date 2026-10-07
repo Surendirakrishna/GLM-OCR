@@ -12,9 +12,9 @@ export function CopyButton({ content, className = '' }: CopyButtonProps) {
 		if (!content) return
 		const success = await copyToClipboard(content)
 		if (success) {
-			toast.success('复制成功')
+			toast.success('Copied')
 		} else {
-			console.error('复制失败')
+			console.error('Copy failed')
 		}
 	}
 
@@ -25,7 +25,7 @@ export function CopyButton({ content, className = '' }: CopyButtonProps) {
 			className={`absolute py-1 px-3 -top-6 right-0 h-6 flex items-center justify-center gap-1 z-10 backdrop-blur-sm pointer-events-auto bg-black/65 text-white rounded-md cursor-pointer text-nowrap ${className}`}
 		>
 			<Copy size={14} strokeWidth={1.5} />
-			<span>复制</span>
+			<span>Copy</span>
 		</button>
 	)
 }

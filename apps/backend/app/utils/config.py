@@ -19,6 +19,13 @@ class Settings(BaseSettings):
     # 数据库配置
     DATABASE_URL: str = "sqlite+aiosqlite:///./tasks.db"
 
+    # glmocr SDK server (layout + region OCR); default http://localhost:5002/glmocr/parse
+    layout_ocr_url: Optional[str] = None
+    # Pages of one document sent to the OCR service concurrently, and the
+    # per-page timeout (pages queue behind each other on the model server)
+    OCR_PAGE_CONCURRENCY: int = 6
+    OCR_PAGE_TIMEOUT: float = 600.0
+
     # 输出目录
     OUTPUT_DIR: str = "./data"
 

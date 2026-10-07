@@ -5,13 +5,10 @@
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional, Callable, Type, List
 from dataclasses import dataclass
-from datetime import datetime, UTC
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.task import Task
 from app.repository.task import TaskRepository
-from app.models.task import TaskStatus
 
 
 @dataclass
@@ -90,7 +87,7 @@ class ProcessingContext:
                 task_id=self.task_id, progress=progress, current_stage=current_step
             )
             await self.db_session.commit()
-        except Exception as e:
+        except Exception:
             # 进度更新失败不应该影响主流程
             pass
 
@@ -151,7 +148,7 @@ class TaskProcessingFlow(ABC):
         if self.context.progress_callback:
             try:
                 await self.context.progress_callback(progress_info)
-            except Exception as e:
+            except Exception:
                 # 回调失败不影响主流程
                 pass
 

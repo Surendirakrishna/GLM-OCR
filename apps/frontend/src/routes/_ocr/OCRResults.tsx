@@ -76,7 +76,7 @@ export function OCRResults({ result, fileName }: OCRResultsProps) {
 	const handleCopy = () => {
 		if (!result?.response?.full_markdown) return
 		navigator.clipboard.writeText(result.response.full_markdown)
-		toast.success('复制成功')
+		toast.success('Copied')
 	}
 
 	const handleDownload = () => {
@@ -88,7 +88,7 @@ export function OCRResults({ result, fileName }: OCRResultsProps) {
 		a.download = `${fileName || 'result'}.md`
 		a.click()
 		URL.revokeObjectURL(url)
-		toast.success('下载成功')
+		toast.success('Downloaded')
 	}
 
 	const response = result?.response
@@ -125,7 +125,7 @@ export function OCRResults({ result, fileName }: OCRResultsProps) {
 								<div className='text-center'>
 									<div className='inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary mb-4'></div>
 									<p className='text-gray-500 dark:text-gray-400'>
-										正在解析中...
+										Parsing...
 									</p>
 								</div>
 							</div>
@@ -136,14 +136,14 @@ export function OCRResults({ result, fileName }: OCRResultsProps) {
 							// 解析完成但没有内容
 							<div className='h-full flex items-center justify-center'>
 								<div className='p-4 rounded-lg text-center text-gray-500 dark:text-gray-400'>
-									<p>暂无 Markdown 内容</p>
+									<p>No Markdown content</p>
 								</div>
 							</div>
 						) : status === 'failed' ? (
 							// 解析失败
 							<div className='h-full flex items-center justify-center'>
 								<div className='p-4 rounded-lg text-center text-red-500 dark:text-red-400'>
-									<p>解析失败</p>
+									<p>Parsing failed</p>
 									{error_message && (
 										<p className='text-sm mt-2 text-gray-500 dark:text-gray-400'>
 											{error_message}
@@ -155,7 +155,7 @@ export function OCRResults({ result, fileName }: OCRResultsProps) {
 							// 未上传文件
 							<div className='h-full flex items-center justify-center'>
 								<div className='p-4 rounded-lg text-center text-gray-500 dark:text-gray-400'>
-									<p>请先上传文件并等待处理完成</p>
+									<p>Upload a file and wait for processing to finish</p>
 								</div>
 							</div>
 						)}
@@ -170,7 +170,7 @@ export function OCRResults({ result, fileName }: OCRResultsProps) {
 							) : (
 								<div className='h-full flex items-center justify-center'>
 									<div className='p-4 rounded-lg text-center text-gray-500 dark:text-gray-400'>
-										<p>暂无数据</p>
+										<p>No data</p>
 									</div>
 								</div>
 							)}

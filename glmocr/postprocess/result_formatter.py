@@ -302,7 +302,15 @@ class ResultFormatter(BasePostProcessor):
         else:
             content = self._clean_content(str(content))
 
+        # Page headers/footers are running text, not headings
+        if native_label in ("header", "footer"):
+            content = re.sub(r"^#+\s*", "", content, flags=re.M)
+            content = re.sub(r"^\*\*([^*\n]+)\*\*\s*$", r"\1", content, flags=re.M)
+
         # Title formatting
+        if native_label in ("doc_title", "paragraph_title"):
+            # A heading wrapped whole in bold ("**Title**") is already emphasised
+            content = re.sub(r"^(#+\s*)?\*\*([^*\n]+)\*\*\s*$", r"\1\2", content)
         if native_label == "doc_title":
             # Remove existing # symbols at the beginning
             content = re.sub(r"^#+\s*", "", content)
