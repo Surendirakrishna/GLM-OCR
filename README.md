@@ -92,6 +92,15 @@ Backend environment variables (`apps/backend/app/utils/config.py`):
 `layout_ocr_url` (harness URL), `OCR_PAGE_CONCURRENCY` (pages of one document
 sent at once, default 6) and `OCR_PAGE_TIMEOUT` (seconds per page, default 600).
 
+Limits for a shared instance (same file): `MAX_UPLOAD_MB` (20) and
+`MAX_PDF_PAGES` (50) reject large uploads; only PDFs and png/jpg/jpeg are
+accepted. Two upstream features are off by default because they are unsafe
+when others can reach the backend: `ENABLE_TASK_LIST` (the job list exposes
+every user's job IDs, and with them their results) and `ALLOW_CUSTOM_OCR_URL`
+(a client-chosen OCR URL makes the server send requests anywhere). The
+`/api/v1/tasks/file` endpoint serves only files under `OUTPUT_DIR`; upstream
+served any path on the machine.
+
 ## How it works
 
 ### Recognition with salad (`glmocr/adapters/modified_qwen.py`)
@@ -232,7 +241,7 @@ harness has not been re-benchmarked there since the switch to heron.
   `/etc/sysctl.d/60-inotify-watches.conf`. If a step fails, the start script
   stops the services it already started.
 - **Killing a service by hand:** use anchored patterns, e.g.
-  `pgrep -f "^/home/nandha/GLM/.venv/bin/python -m glmocr.server"`; an
+  `pgrep -f "^$PWD/../.venv/bin/python -m glmocr.server"`; an
   unanchored `pkill -f` matches your own shell's command line.
 
 ## Known limits

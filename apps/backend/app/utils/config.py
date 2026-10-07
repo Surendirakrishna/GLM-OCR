@@ -26,6 +26,15 @@ class Settings(BaseSettings):
     OCR_PAGE_CONCURRENCY: int = 6
     OCR_PAGE_TIMEOUT: float = 600.0
 
+    # Limits for a publicly shared instance
+    MAX_UPLOAD_MB: int = 20
+    MAX_PDF_PAGES: int = 50
+    # Off by default: the job list exposes every user's job IDs (and so their
+    # results), and a client-chosen OCR URL lets callers make this server send
+    # requests anywhere (SSRF).
+    ENABLE_TASK_LIST: bool = False
+    ALLOW_CUSTOM_OCR_URL: bool = False
+
     # 输出目录
     OUTPUT_DIR: str = "./data"
 

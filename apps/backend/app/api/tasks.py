@@ -3,6 +3,7 @@
 """
 
 import json
+import shutil
 import uuid
 from pathlib import Path
 from typing import Optional
@@ -43,6 +44,14 @@ async def submit_task(
     - **output_format**: 输出格式，默认markdown
     - **retry_config**: 重试配置（JSON字符串，可选）
     """
+    if not file_upload_handler.valid(file):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Unsupported file type. Upload a PDF or an image (png/jpg/jpeg).",
+        )
+    if custom_url is not None and not settings.ALLOW_CUSTOM_OCR_URL:
+        custom_url = None  # see ALLOW_CUSTOM_OCR_URL in app/utils/config.py
+
     try:
         # 生成document_id
         document_id = str(uuid.uuid4())
@@ -63,6 +72,7 @@ async def submit_task(
         saved_path_obj = Path(saved_path)
         file_size = saved_path_obj.stat().st_size
         file_type = saved_path_obj.suffix.lstrip(".").lower()
+        _check_limits(saved_path_obj, file_size, file_type)
 
         # 提交任务
         task_manager = get_task_manager()
@@ -92,12 +102,35 @@ async def submit_task(
             message="Task submitted successfully",
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to submit task: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to submit task: {str(e)}",
         )
+
+
+def _check_limits(path: Path, file_size: int, file_type: str) -> None:
+    """Reject oversized uploads and long PDFs (removing the saved file)."""
+    error = None
+    if file_size > settings.MAX_UPLOAD_MB * 1024 * 1024:
+        error = f"File is larger than {settings.MAX_UPLOAD_MB} MB."
+    elif file_type == "pdf":
+        import pymupdf
+
+        try:
+            with pymupdf.open(path) as doc:
+                pages = doc.page_count
+        except Exception:
+            error = "The PDF could not be opened."
+        else:
+            if pages > settings.MAX_PDF_PAGES:
+                error = f"The PDF has {pages} pages; the limit is {settings.MAX_PDF_PAGES}."
+    if error:
+        shutil.rmtree(path.parent, ignore_errors=True)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error)
 
 
 @router.get("/file")
@@ -111,7 +144,15 @@ async def read_file(path: str):
     - **path**: 文件路径
     """
     try:
-        file_path = Path(path)
+        # Only files produced for jobs (in OUTPUT_DIR) may be served: any other
+        # path would expose the whole server (keys, tokens, configs).
+        output_dir = Path(settings.OUTPUT_DIR).resolve()
+        file_path = Path(path).resolve()
+        if not file_path.is_relative_to(output_dir):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="File not found",
+            )
 
         # 检查文件是否存在
         if not file_path.exists():
@@ -290,6 +331,8 @@ async def list_tasks(status: Optional[str] = None, limit: int = 100, offset: int
     - **limit**: 返回数量限制
     - **offset**: 偏移量
     """
+    if not settings.ENABLE_TASK_LIST:
+        raise HTTPException(status_code=404, detail="Not Found")
     try:
         task_manager = get_task_manager()
         tasks = await task_manager.list_tasks(status=status, limit=limit, offset=offset)
